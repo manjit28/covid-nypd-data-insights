@@ -1,0 +1,217 @@
+---
+title: "NYPD Shooting Data (Historic)"
+date: "2023-02-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import libraries that are needed
+```{r libs}
+library(tidyverse)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+```
+
+## Problem Statement
+I am analyzing data provided by NYPD regarding shooting incidents in New York city. I would try to find where shootings happen most in New York, what time of the day they happen most and what has been trend of shootings over the years.
+
+## Data Description
+Data provided by NYPD contains various attributes regarding shooting incidents in New York like which borough, date and time of shooting, information regarding victim and shooter, precinct, whether shooting resulted in murder. Information regarding victim and shooter contains age,race,gender. We also have exact location data but I am not going to use that.
+
+## Load the data, check for missing values, head and summary the data
+```{r load_data}
+ nypd_shooting_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+
+# nypd_shooting_data <- read.csv("NYPD_Shooting_Incident_Data__Historic_.csv")
+nrow(nypd_shooting_data)
+
+# Let us check rows that miss value for one or more columns 
+nrow(nypd_shooting_data[complete.cases(na_if(nypd_shooting_data, '')), ])
+
+# majority of rows have one or more columns missing values, so we cannot just drop or impute them
+# but columns like boro, date, time etc that we want to analyze have no missing values, 
+# so we are going to leave it as it is
+nypd_shooting_data <- nypd_shooting_data %>% drop_na(BORO) %>% drop_na(OCCUR_DATE)
+
+glimpse(nypd_shooting_data)
+
+nrow(nypd_shooting_data)
+
+head(nypd_shooting_data)
+
+summary(nypd_shooting_data)
+```
+
+## Clean up the data
+```{r clean_data, message=TRUE, warning=TRUE}
+shooting_data_clean <- nypd_shooting_data %>%
+    mutate(BORO = as_factor(BORO),
+         JURISDICTION_CODE = as_factor(JURISDICTION_CODE),
+         STATISTICAL_MURDER_FLAG = as_factor(STATISTICAL_MURDER_FLAG),
+         MURDER_NUMERIC = as.numeric(STATISTICAL_MURDER_FLAG) - 1,
+         LOCATION_DESC = as_factor(LOCATION_DESC),
+         VIC_AGE_GROUP = as_factor(VIC_AGE_GROUP),
+         VIC_SEX = as_factor(VIC_SEX),
+         VIC_RACE = as_factor(VIC_RACE),
+         PERP_AGE_GROUP = as_factor(PERP_AGE_GROUP),
+         PERP_SEX = as_factor(PERP_SEX),
+         PERP_RACE = as_factor(PERP_RACE),
+         OCCUR_DATE = as.Date(OCCUR_DATE, format = "%m/%d/%Y"),
+         ) %>%
+  # Select only the columns we need
+  select(OCCUR_DATE, OCCUR_TIME, BORO, PRECINCT, 
+         STATISTICAL_MURDER_FLAG,  VIC_SEX, VIC_RACE, 
+         PERP_SEX, PERP_RACE,MURDER_NUMERIC)
+
+# Convert OCCUR_TIME to numeric format to get time in 1600 format
+shooting_data_clean$OCCUR_TIME_NUMERIC <- (as.numeric(gsub(":", "", shooting_data_clean$OCCUR_TIME))) / 100
+
+# Print the first 10 rows of the new variable
+head(shooting_data_clean$OCCUR_TIME_NUMERIC, 10)
+
+# Display the first few rows of the cleaned dataset
+head(shooting_data_clean)
+
+head(shooting_data_clean$MURDER_NUMERIC)
+# Display a summary of the cleaned dataset
+summary(shooting_data_clean)  
+```
+
+## Add some new columns
+```{r add_new_columns, message=TRUE, warning=TRUE}
+# Create new columns for year, month, and day
+shooting_data_clean <- shooting_data_clean %>%
+  mutate(YEAR = as.numeric(format(OCCUR_DATE,'%Y')),
+         MONTH = month(OCCUR_DATE, label = TRUE),
+         DAY = day(OCCUR_DATE))
+
+
+
+# Create a new column with time buckets
+shooting_data_clean <- shooting_data_clean %>%
+  mutate(time_bucket = cut(OCCUR_TIME_NUMERIC, breaks = c(0, 400, 800, 1200, 1600, 2000, 2400), labels = c("1", "2", "3", "4", "5", "6"), include.lowest = TRUE))
+
+# Display the first few rows of the cleaned dataset
+head(shooting_data_clean)
+
+```
+
+## Model
+```{r test_model}
+shooting_data_yearly <- shooting_data_clean %>%
+                        group_by(YEAR) %>%
+                        summarize(total_shootings = n(),
+                                  total_murders = sum(MURDER_NUMERIC))
+shooting_data_yearly <- shooting_data_yearly %>% arrange(YEAR)
+
+train_size <- floor(0.8 * nrow(shooting_data_yearly))
+train_data <- shooting_data_yearly %>% 
+  slice(1:train_size)
+test_data <- shooting_data_yearly %>% 
+  slice((train_size+1):nrow(shooting_data_yearly))
+
+# Fit a logistic regression model to predict STATISTICAL_MURDER_FLAG
+#model <- glm(STATISTICAL_MURDER_FLAG ~ BORO + VIC_SEX + YEAR + OCCUR_TIME_NUMERIC, data = train_data, family = binomial())
+model_murders <- lm(total_murders ~ YEAR, data = train_data)
+summary(model_murders)
+predictions_murders <- predict(model_murders, newdata = test_data, type = "response")
+
+
+model_shootings <- lm(total_shootings ~ YEAR, data = train_data)
+summary(model_shootings)
+predictions_shootings <- predict(model_shootings, newdata = test_data, type = "response")
+
+predicted_data <- test_data %>% mutate(pred_murders = floor(predictions_murders),
+                                       pred_shootings = floor(predictions_shootings))
+
+predicted_data
+
+```
+
+
+## Visualization 1 - Bar chart showing number of shootings by boro
+### (This plot would be better if we knew population of all boros and could do shootings per thousand or million)
+```{r visualization_1}
+shooting_data_clean %>%
+  count(BORO) %>%
+  ggplot(aes(x = BORO, y = n, fill = BORO)) +
+  geom_col() +
+  labs(title = "Number of Shooting Incidents by Borough",
+       x = "Borough",
+       y = "Number of Incidents") +
+  theme_minimal()
+```
+
+
+## Visualization 2 - Plot showing shooting incidents by time of day
+```{r visualization_2}
+# Count the number of shootings by time bucket
+shooting_counts_by_time <- shooting_data_clean %>%
+  group_by(time_bucket) %>%
+  summarize(count = n())
+
+# Plot the number of shootings by time bucket
+ggplot(shooting_counts_by_time, aes(x = time_bucket, y = count)) +
+  geom_bar(stat = "identity", fill = "#003f5c") +
+  scale_x_discrete(labels = c("0-4", "4-8", "8-12", "12-16", "16-20", "20-24")) +
+  labs(title = "Number of Shooting Incidents by Time of Day", x = "Time of Day (hours)", y = "Number of Shooting Incidents")
+
+```
+
+
+
+
+## Visualization 3 - Stack Bar plot showing shooting incidents and murders by year
+```{r visualization_3}
+# Calculate the number of shootings and murders per year
+shootings_and_murders_by_year <- shooting_data_clean %>% 
+  group_by(YEAR, STATISTICAL_MURDER_FLAG) %>% 
+  summarise(total_incidents = n()) %>% 
+  ungroup() %>% 
+  mutate(STATISTICAL_MURDER_FLAG = factor(STATISTICAL_MURDER_FLAG))
+
+# Plot the number of shootings and murders per year
+ggplot(shootings_and_murders_by_year, aes(x = YEAR, y = total_incidents, fill = STATISTICAL_MURDER_FLAG)) +
+  geom_col() +
+  labs(title = "Number of Shootings and Murders by Year", x = "Year", y = "Total Incidents", fill = "Resulted in Murder") +
+  scale_fill_manual(values = c("#003f5c","#7a5195"))
+```
+
+## Visualization 4 - Shooting incidents by Year and Boro
+```{r shootings_boro}
+library(ggplot2)
+
+# Calculate the number of shootings per year by borough
+shootings_by_borough_and_year <- shooting_data_clean %>% 
+  group_by(YEAR, BORO) %>% 
+  summarise(total_shootings = n()) %>% 
+  ungroup()
+
+# Plot the number of shootings per year by borough
+ggplot(shootings_by_borough_and_year, aes(x = YEAR, y = total_shootings, color = BORO)) +
+  geom_line(size = 1) +
+  labs(title = "Number of Shootings by Year and Borough", x = "Year", y = "Total Shootings", color = "Borough") +
+  scale_color_manual(values = c("#003f5c", "#58508d", "#bc5090", "#ff6361", "#ffa600"))
+
+```
+
+
+## Conclusion
+We analyzed the NYPD shooting incident data set, provided by NYC Open Data portal. This data set contained information about shooting incidents like where they occurred, when they occurred and some details about victims and perpetrators.
+
+We started by importing required libraries, importing the data, cleaning it up for type conversions etc. and dropping columns that we did not need. We also added some new columns to help us better analyze. Looked at rows with missing data for various columns and had no missing data for columns that we analyzed.
+
+We found that shooting incident in New York city were going down over period of time but they have gone up again starting 2020. Also, most shooting incidents were reported between 8 pm and 4 am.
+
+This data set may be subject to source of bias such as under reporting of shooting incidents. Data may not fully represent diversity of New York city. Our analysis was limited by available number of variables. Personal bias can also come through our own experience and assumptions like if we know demography of the city and start to analyze based on data. We tried to mitigate that by not making any assumptions.
+
+
+## Session Info
+```{r session_info}
+sessionInfo()
+
+```

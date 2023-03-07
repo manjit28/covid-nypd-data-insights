@@ -1,0 +1,259 @@
+---
+title: "COVID-19 Data Analysis"
+date: '2023-03-06'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import libraries that are needed
+```{r load_libs}
+library(tidyverse)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+library(scales)
+```
+
+## Problem Statement
+I am analyzing COVID data in this project. I am trying to find what were most affected countries by number of cases and deaths. I would also try to find what is trend of new cases globally. From there, I would create a linear model to predict number of new COVID cases per day globally.
+
+## Data Description
+I am using COVID-19 data provided by John Hopkins University. I am using four data files that contain information about number of COVID cases and deaths for US and Globally. This data set contains information like total cases, deaths, province_state, country, date and few other fields that I may not use.
+
+
+## Load COVID data for US and Global
+```{r load_data}
+global_cases_orig <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv", show_col_types = FALSE)
+global_deaths_orig <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv", show_col_types = FALSE)
+us_cases_orig <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv", show_col_types = FALSE)
+us_deaths_orig <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv", show_col_types = FALSE)
+```
+
+## Tidy data and combine Cases and Deaths data - Global
+```{r tidy_global_data}
+global_cases <- global_cases_orig %>% pivot_longer(cols = -c('Province/State',
+                                                        'Country/Region',Lat, 'Long'),
+                                              names_to = "date",
+                                              values_to = "cases") %>%
+                select(-c(Lat,Long))
+
+global_cases
+
+global_deaths <- global_deaths_orig %>% pivot_longer(cols = -c('Province/State',
+                                                        'Country/Region',Lat, 'Long'),
+                                              names_to = "date",
+                                              values_to = "deaths") %>%
+                select(-c(Lat,Long))
+global_deaths
+
+
+global_combined <- global_cases %>% full_join(global_deaths) %>% 
+          rename(Country_Region = 'Country/Region', Province_State = 'Province/State') %>%
+          mutate(date = mdy(date))
+
+global_combined
+```
+
+## Tidy data and combine Cases and Deaths data - US
+```{r tidy_us_data}
+us_cases <- us_cases_orig %>% 
+  select(-c(UID, iso2, iso3, code3, FIPS, Lat, Long_))
+us_deaths <- us_deaths_orig %>% 
+  select(-c(UID, iso2, iso3, code3, FIPS, Lat, Long_))
+
+us_cases <- us_cases %>% pivot_longer(cols = -c(Admin2,Province_State,
+                                                        Country_Region,Combined_Key),
+                                              names_to = "date",
+                                              values_to = "cases")
+
+us_cases
+
+us_deaths <- us_deaths %>% pivot_longer(cols = -c('Admin2','Province_State',
+                                                        'Country_Region',Combined_Key),
+                                              names_to = "date",
+                                              values_to = "deaths")
+us_deaths
+
+
+us_combined <- us_cases %>% full_join(us_deaths) %>% 
+          mutate(date = mdy(date))
+
+us_combined
+```
+
+## Filter Global Data
+```{r filter_data_1}
+summary(global_combined)
+
+global_combined <- global_combined %>% filter(cases > 0)
+
+summary(global_combined)
+
+#global_combined %>% filter(cases > 100000000)
+```
+
+
+## Rename some columns for consistency across data sets
+```{r rename_columns}
+names(global_combined)[1:2] <- c("State", "Country")
+names(us_combined)[1:3] <- c("County","State", "Country")
+
+global_combined
+us_combined
+```
+
+## Group Data by Daily
+```{r group_data_by_daily}
+global_combined_daily <- global_combined %>% 
+  group_by(Country, date) %>% 
+  summarize(cases = sum(cases),deaths = sum(deaths))
+
+global_combined_daily <- global_combined_daily %>% 
+          mutate(date = as.Date(date, format = "%m/%d/%y"))
+
+global_combined_daily
+
+
+us_combined_daily <- us_combined %>% 
+  group_by(State, date) %>% 
+  summarize(cases = sum(cases),deaths = sum(deaths))
+
+us_combined_daily <- us_combined_daily %>% 
+          mutate(date = as.Date(date, format = "%m/%d/%y"))
+
+us_combined_daily
+
+```
+
+## Let us find Top 5 Countries by Total Number of Cases
+```{r top_5_cases}
+# Get top 5 countries by total confirmed cases
+top_countries <- global_combined_daily %>%
+  group_by(Country) %>%
+  summarize(Total_Confirmed = sum(cases)) %>%
+  arrange(desc(Total_Confirmed)) %>%
+  slice_head(n = 5)
+
+# Filter data for top 5 countries
+top_data <- global_combined_daily %>%
+  filter(Country %in% top_countries$Country)
+
+# Plot daily confirmed cases for top 5 countries
+ggplot() +
+  geom_line(data = top_data, aes(x = as.Date(date), y = cases, color = Country)) +
+  scale_color_brewer(palette = "Set1") +
+  scale_y_continuous(labels = comma_format(big.mark = ",", accuracy = 0.1)) +
+  labs(x = "Date", y = "Cases", 
+       title = "Total Confirmed Cases for Top 5 Countries", 
+       color = "Country")
+```
+
+## Let us find Top 5 Countries by Total Number of Deaths
+```{r top_5_deaths}
+# Get top 5 countries by total deaths
+top_countries <- global_combined_daily %>%
+  group_by(Country) %>%
+  summarize(Total_Death = sum(deaths)) %>%
+  arrange(desc(Total_Death)) %>%
+  slice_head(n = 5)
+
+# Filter data for top 5 countries
+top_data <- global_combined_daily %>%
+  filter(Country %in% top_countries$Country)
+
+# Plot deaths for top 5 countries
+ggplot() +
+  geom_line(data = top_data, aes(x = as.Date(date), y = deaths, color = Country)) +
+  scale_color_brewer(palette = "Set1") +
+  scale_y_continuous(labels = comma_format(big.mark = ",", accuracy = 0.1)) +
+  labs(x = "Date", y = "Deaths", 
+       title = "COVID-19 Deaths for Top 5 Countries", 
+       color = "Country")
+```
+
+```{r us_global_1}
+# Filter data for US and rest of world
+us_data <- global_combined_daily %>%
+  filter(Country == "US")
+world_data <- global_combined_daily %>%
+  filter(Country != "US") %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases)) %>%
+  mutate(Country = "Rest of World")
+
+# Combine data for plotting
+plot_data <- bind_rows(us_data, world_data)
+
+# Plot daily confirmed cases for US and rest of world
+ggplot(plot_data, aes(x = as.Date(date), y = cases, color = Country)) +
+  geom_line() +
+  scale_y_continuous(labels = comma_format(big.mark = ",", accuracy = 0.1)) +
+  scale_color_manual(values = c("US" = "blue", "Rest of World" = "red")) +
+  labs(x = "Date", y = "Confirmed Cases", 
+       title = "Total Confirmed Cases for US and Rest of World", 
+       color = "Country")
+
+
+```
+
+```{r global_new_cases}
+# Calculate new cases per day global
+cases_data <- global_combined_daily %>%
+  group_by(date) %>%
+  summarize(new_cases = sum(cases) - sum(lag(cases, default = 0)))
+
+# Plot new cases per day for global
+ggplot() +
+  scale_y_continuous(labels = comma_format(big.mark = ",", accuracy = 0.1)) +
+  geom_line(data = cases_data, aes(x = date, y = new_cases)) +
+  labs(x = "Date", y = "New Cases per Day",
+       title = "New Cases per Day Globally") 
+  
+```
+
+### We can see big spikes in second half of 2021 in above plot
+
+## Model to predict number of new cases globally per day
+```{r model_1}
+global_data_new_cases <- global_combined_daily %>%
+  arrange(date) %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases)) %>%
+  mutate(new_cases = cases - lag(cases, default = 0)) %>%
+  select(date, new_cases)
+
+train_size <- floor(0.8 * nrow(global_data_new_cases))
+train_data <- global_data_new_cases %>% 
+  slice(1:train_size)
+test_data <- global_data_new_cases %>% 
+  slice((train_size+1):nrow(global_data_new_cases))
+
+head(train_data)
+head(test_data)
+
+lm_model <- lm(new_cases ~ lag(new_cases,1), data = train_data)
+summary(lm_model)
+
+predictions <- predict(lm_model, newdata = test_data, type = "response")
+
+predicted_data <- test_data %>% mutate(pred = floor(predictions))
+
+predicted_data
+```
+
+## Conclusion and Possible Bias
+Top 5 countries with most cases included US, India, France, Germany and Brazil. As this data is all the way upto March 2023, we have to look at data for last one year bit differently. Not all countries may be reporting cases same way, there are self tests going on that are not reported. 
+
+Top 5 countries with most COVID related deaths included US, Brazil, India, Russia and Mexico. France and Germany are not in top 5 for number of deaths.
+
+US seems to be the only country with uptrend for number of cases and deaths compared to other top countries.
+
+Globally, we had couple of big spikes in between 2021 and 2022, especially in second half of 2021.
+
+### Possible Bias:
+
+There are some sources of bias in this data. Not all countries may have reported all the cases. This may be because of multiple reasons like testing facilities (especially early on), political sensitivity to the numbers, not enough infrastructure to get local data to central databases. 
+On the other side of equation, there may have been cases where numbers were inflated by hospitals in some counries by tagging some  cases as COVID to get more money from insurance. Chances of this bias would be less compared to under reporting by countries but not totally ruled out. 
