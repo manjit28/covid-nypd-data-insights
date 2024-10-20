@@ -22,4 +22,4 @@ To run the R scripts used for this analysis, you will need the following:
 ## How to Use
 1. Clone this repository.
    ```bash
-   git clone https://github.com/yourusername/your-repo-name.git
+   https://github.com/manjit28/covid-nypd-data-insights.git
