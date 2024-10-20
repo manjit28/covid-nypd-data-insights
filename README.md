@@ -23,3 +23,15 @@ To run the R scripts used for this analysis, you will need the following:
 1. Clone this repository.
    ```bash
    https://github.com/manjit28/covid-nypd-data-insights.git
+2. Open the .Rmd files in RStudio or your preferred R environment.
+
+3. Knit the files to generate reports in the format of your choice (HTML, PDF, etc.).
+
+## Acknowledgments
+Special thanks to the data providers:
+
+COVID-19 data was sourced from Johns Hopkins University. Links are in the document.
+
+NYPD Shooting data was sourced from [[City of New York](https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD)].
+
+Feel free to explore the data and build upon the analyses!
